@@ -7,4 +7,4 @@ All ready to check solutions should be placed in master branch and include task 
 
 ## Task Execution Status
 
-**Task 1:** In progress...
+**Task 1:** Finished [2017-08-04 22:02]
