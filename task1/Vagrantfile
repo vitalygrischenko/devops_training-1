@@ -1,3 +1,22 @@
+#Reading DNS Settings
+domainsList = Hash.new
+file = File.new("dns_list.txt", "r")
+while (line = file.gets)
+    info = line.split(":")
+    domainsList[info[0]] = info[1].gsub("\n","")
+end
+file.close
+
+dnsOutput = "";
+domainsList.each do |hostname, ip|
+  dnsOutput << "\r\n#{ip} #{hostname} #{hostname}"
+end
+#creating simple script for Hosts update
+script = <<SCRIPT
+  echo "#{dnsOutput}" >> /etc/hosts
+SCRIPT
+
+# VM configs
 VAGRANTFILE_API_VERSION = "2"
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   #Centos based
@@ -20,7 +39,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
     server1.vm.provision "shell", path: "config_centos.sh"
     #register foreign host name
     server1.vm.provision "shell",
-      inline: "echo '172.22.0.3  server2 server2' >> /etc/hosts"
+      inline: script
   end
 
   #Settings for server 2
@@ -29,6 +48,6 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
     server2.vm.network "private_network", ip: "172.22.0.3"
     #register foreign host name
     server2.vm.provision "shell",
-      inline: "echo '172.22.0.2  server1 server1' >> /etc/hosts"
+      inline: script
   end
 end
