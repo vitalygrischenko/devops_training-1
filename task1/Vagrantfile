@@ -9,7 +9,7 @@ file.close
 
 dnsOutput = "";
 domainsList.each do |hostname, ip|
-  dnsOutput << "\r\n#{ip} #{hostname} #{hostname}"
+  dnsOutput << "\n#{ip} #{hostname} #{hostname}"
 end
 #creating simple script for Hosts update
 script = <<SCRIPT
