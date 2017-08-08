@@ -1,15 +1,24 @@
 #Reading DNS Settings
-domainsList = Hash.new
-file = File.new("dns_list.txt", "r")
-while (line = file.gets)
-    info = line.split(":")
-    domainsList[info[0]] = info[1].gsub("\n","")
-end
-file.close
-
+server_list = {
+  "server1" => {
+      "ip"=>"72.22.0.2",
+      "provision"=>{
+        "type"=>"shell",
+        "path"=>"config_centos.sh"
+      },
+      "share"=>{
+        "from"=>"./shared/",
+        "to"=>"/shared"
+      }
+    },
+    "server2" => {
+        "ip"=>"72.22.0.3"
+    }
+}
+#collect all hosts
 dnsOutput = "";
-domainsList.each do |hostname, ip|
-  dnsOutput << "\n#{ip} #{hostname} #{hostname}"
+server_list.each do |hostname, info|
+  dnsOutput << "\n#{info["ip"]} #{hostname} #{hostname}"
 end
 #creating simple script for Hosts update
 script = <<SCRIPT
@@ -22,32 +31,19 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   #Centos based
   config.vm.box = "centos/7"
 
-  #Ubuntu based
-  #config.vm.box = "precise64"
-  #config.vm.box_url = "http://files.vagrantup.com/precise64.box"
-
-  #Settings for server 1
-  config.vm.define "server1" do |server1|
-    server1.vm.hostname = "server1"
-    server1.vm.network "private_network", ip: "172.22.0.2"
-    server1.vm.synced_folder "./shared/", "/shared"
-
-    #for ubuntu
-    #server1.vm.provision "shell", path: "config.sh"
-
-    #for centos
-    server1.vm.provision "shell", path: "config_centos.sh"
-    #register foreign host name
-    server1.vm.provision "shell",
-      inline: script
-  end
-
-  #Settings for server 2
-  config.vm.define "server2" do |server2|
-    server2.vm.hostname = "server2"
-    server2.vm.network "private_network", ip: "172.22.0.3"
-    #register foreign host name
-    server2.vm.provision "shell",
-      inline: script
+  #configure machines
+  server_list.each do |dns_name, info|
+    config.vm.define dns_name do |server|
+      server.vm.hostname = dns_name
+      server.vm.network "private_network", ip: info["ip"]
+      if info.has_key?("share") then
+        server.vm.synced_folder info["share"]["from"], info["share"]["to"]
+      end
+      if info.has_key?("provision") then
+        server.vm.provision info["provision"]["type"], path: info["provision"]["path"]
+      end
+      server.vm.provision "shell",
+        inline: script
+    end
   end
 end
