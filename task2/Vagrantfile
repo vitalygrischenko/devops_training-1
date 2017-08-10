@@ -1,0 +1,98 @@
+#Reading DNS Settings
+serversCount = 5
+serverOptions = {
+  "httpd" => {
+      "name"=>"httpd",
+      "ip"=>"72.22.0.#{serversCount+2}",
+      "share"=>{
+        "from"=>"./shared/",
+        "to"=>"/shared"
+      }
+    },
+  "tomcat" => {
+      "name_prefix"=>"tomcat",
+      "ip_prefix"=>"72.22.0."
+  }
+}
+projectFolder = "task2"
+exposedPort = 35601
+#workers collections
+workersNames = []
+workerIps = []
+# VM configs
+VAGRANTFILE_API_VERSION = "2"
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  #Centos based
+  config.vm.box = "centos/7"
+
+  #configuring tomcts
+  [*1..serversCount].each do |index|
+    dns_name = "#{serverOptions["tomcat"]["name_prefix"]}#{index}"
+    ip = "#{serverOptions["tomcat"]["ip_prefix"]}#{index+1}"
+    #add data to list for future configuring
+    workersNames << dns_name
+    workerIps << ip
+    #creating vm
+    config.vm.define dns_name do |server|
+      server.vm.hostname = dns_name
+      server.vm.network "private_network", ip: ip
+      if serverOptions["tomcat"].has_key?("share") then
+        server.vm.synced_folder serverOptions["tomcat"]["share"]["from"], serverOptions["tomcat"]["share"]["to"]
+      end
+      #creaiong provision script
+      script = <<SCRIPT
+yum update -y
+yum install -y java-1.8.0-openjdk
+yum install -y tomcat tomcat-webapps tomcat-admin-webapps
+mkdir /usr/share/tomcat/webapps/#{projectFolder}
+echo "<h3>Tomcat #{index} welcomes you!</h3>" > /usr/share/tomcat/webapps/#{projectFolder}/index.html
+systemctl stop firewalld
+systemctl enable tomcat
+systemctl start tomcat
+SCRIPT
+      #add some configs
+      server.vm.provision "shell",
+        inline: script
+    end
+  end
+  #building balancer mapping file
+  wokersHosts = workersNames.join(",")
+  propertiesList = "worker.list=lb\n";
+  propertiesList << "worker.lb.type=lb\n"
+  propertiesList << "worker.lb.balance_workers=#{wokersHosts}\n"
+  [*1..serversCount].each do |index|
+      propertiesList << "worker.#{workersNames[index-1]}.host=#{workerIps[index-1]}\n"
+      propertiesList << "worker.#{workersNames[index-1]}.port=8009\n"
+	    propertiesList << "worker.#{workersNames[index-1]}.type=ajp13\n"
+
+  end
+  #building httpd.conf update
+  httpdConfConfig ="\nLoadModule jk_module modules/mod_jk.so
+JkWorkersFile conf/workers.properties
+JkShmFile /tmp/shm
+JkLogFile logs/mod_jk.log
+JkLogLevel info
+JkMount /#{projectFolder}* lb"
+  #configuring httpd
+  config.vm.define serverOptions["httpd"]["name"] do |server|
+    server.vm.hostname = serverOptions["httpd"]["name"]
+    server.vm.network "private_network", ip: serverOptions["httpd"]["ip"]
+    server.vm.network "forwarded_port", guest: 80, host: exposedPort
+    if serverOptions["httpd"].has_key?("share") then
+      server.vm.synced_folder serverOptions["httpd"]["share"]["from"], serverOptions["httpd"]["share"]["to"]
+    end
+    #creaiong provision script
+    scripthttpd = <<SCRIPT
+yum update -y
+yum install -y httpd
+systemctl stop firewalld
+cp /shared/mod_jk.so /etc/httpd/modules/
+echo "#{propertiesList}" > /etc/httpd/conf/workers.properties
+echo "#{httpdConfConfig}" >> /etc/httpd/conf/httpd.conf
+systemctl enable httpd
+systemctl start httpd
+SCRIPT
+    server.vm.provision "shell",
+      inline: scripthttpd
+  end
+end
