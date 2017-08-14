@@ -1,12 +1,12 @@
 #Reading DNS Settings
-SERVERS_COUNT = 2
+SERVERS_COUNT = 3
 PROJECT_FOLDER = "task2"
 EXPOSED_PORT = 35601
 
 server_options = {
   "httpd" => {
       "name"=>"httpd",
-      "ip"=>"72.22.0.#{SERVERS_COUNT+2}",
+      "ip"=>"72.22.0.#{SERVERS_COUNT+1}",
       "share"=>{
         "from"=>"./shared/",
         "to"=>"/shared"
@@ -17,6 +17,10 @@ server_options = {
       "ip_prefix"=>"72.22.0."
   }
 }
+tomcats_count = SERVERS_COUNT-1
+if tomcats_count===0
+  tomcats_count=1
+end
 #workers collections
 workers_names = []
 worker_ips = []
@@ -41,7 +45,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   config.vm.provision "shell",
     inline: common_provision
   #configuring tomcts
-  [*1..SERVERS_COUNT].each do |index|
+  [*1..tomcats_count].each do |index|
     dns_name = "#{server_options["tomcat"]["name_prefix"]}#{index}"
     ip = "#{server_options["tomcat"]["ip_prefix"]}#{index+1}"
     #add data to list for future configuring
@@ -51,6 +55,9 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
     config.vm.define dns_name do |server|
       server.vm.hostname = dns_name
       server.vm.network "private_network", ip: ip
+      if SERVERS_COUNT===1 then
+        server.vm.network "forwarded_port", guest: 8080, host: EXPOSED_PORT
+      end
       if server_options["tomcat"].has_key?("share") then
         server.vm.synced_folder server_options["tomcat"]["share"]["from"], server_options["tomcat"]["share"]["to"]
       end
@@ -68,35 +75,37 @@ SCRIPT
         inline: script
     end
   end
-  #building balancer mapping file
-  wokers_hosts = workers_names.join(",")
-  properties_list = "worker.list=lb\n";
-  properties_list << "worker.lb.type=lb\n"
-  properties_list << "worker.lb.balance_workers=#{wokers_hosts}\n"
-  [*1..SERVERS_COUNT].each do |index|
-      properties_list << "worker.#{workers_names[index-1]}.host=#{worker_ips[index-1]}\n"
-      properties_list << "worker.#{workers_names[index-1]}.port=8009\n"
-      properties_list << "worker.#{workers_names[index-1]}.type=ajp13\n"
+  if SERVERS_COUNT>1 then
+    #building balancer mapping file
+    wokers_hosts = workers_names.join(",")
+    properties_list = "worker.list=lb\n";
+    properties_list << "worker.lb.type=lb\n"
+    properties_list << "worker.lb.balance_workers=#{wokers_hosts}\n"
+    [*1..tomcats_count].each do |index|
+        properties_list << "worker.#{workers_names[index-1]}.host=#{worker_ips[index-1]}\n"
+        properties_list << "worker.#{workers_names[index-1]}.port=8009\n"
+        properties_list << "worker.#{workers_names[index-1]}.type=ajp13\n"
 
-  end
-  #creaiong provision script for httpd
-  script_httpd = <<SCRIPT
-  yum install -y httpd
-  cp /shared/mod_jk.so /etc/httpd/modules/
-  echo "#{properties_list}" > /etc/httpd/conf/workers.properties
-  echo "#{httpd_conf_config}" >> /etc/httpd/conf/httpd.conf
-  systemctl enable httpd
-  systemctl start httpd
-SCRIPT
-  #configuring httpd
-  config.vm.define server_options["httpd"]["name"] do |server|
-    server.vm.hostname = server_options["httpd"]["name"]
-    server.vm.network "private_network", ip: server_options["httpd"]["ip"]
-    server.vm.network "forwarded_port", guest: 80, host: EXPOSED_PORT
-    if server_options["httpd"].has_key?("share") then
-      server.vm.synced_folder server_options["httpd"]["share"]["from"], server_options["httpd"]["share"]["to"]
     end
-    server.vm.provision "shell",
-      inline: script_httpd
+    #creaiong provision script for httpd
+    script_httpd = <<SCRIPT
+    yum install -y httpd
+    cp /shared/mod_jk.so /etc/httpd/modules/
+    echo "#{properties_list}" > /etc/httpd/conf/workers.properties
+    echo "#{httpd_conf_config}" >> /etc/httpd/conf/httpd.conf
+    systemctl enable httpd
+    systemctl start httpd
+SCRIPT
+    #configuring httpd
+    config.vm.define server_options["httpd"]["name"] do |server|
+      server.vm.hostname = server_options["httpd"]["name"]
+      server.vm.network "private_network", ip: server_options["httpd"]["ip"]
+      server.vm.network "forwarded_port", guest: 80, host: EXPOSED_PORT
+      if server_options["httpd"].has_key?("share") then
+        server.vm.synced_folder server_options["httpd"]["share"]["from"], server_options["httpd"]["share"]["to"]
+      end
+      server.vm.provision "shell",
+        inline: script_httpd
+    end
   end
 end
