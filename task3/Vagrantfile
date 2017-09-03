@@ -1,0 +1,140 @@
+#Reading DNS Settings
+SERVERS_COUNT = 3
+PROJECT_FOLDER = "task3"
+EXPOSED_PORT = 35601
+JENKINS_EXPOSED_PORT = 35602
+NEXUS_EXPOSED_PORT = 35603
+
+server_options = {
+  "httpd" => {
+      "name"=>"httpd",
+      "ip"=>"72.22.0.#{SERVERS_COUNT+1}",
+      "share"=>{
+        "from"=>"./shared/",
+        "to"=>"/shared"
+      }
+    },
+  "tomcat" => {
+      "name_prefix"=>"tomcat",
+      "ip_prefix"=>"72.22.0."
+  }
+}
+tomcats_count = SERVERS_COUNT-1
+if tomcats_count===0
+  tomcats_count=1
+end
+#workers collections
+workers_names = []
+worker_ips = []
+#provision for all VMs
+common_provision =  <<SCRIPT
+yum update -y
+systemctl stop firewalld
+SCRIPT
+#building httpd.conf update
+httpd_conf_config ="\nLoadModule jk_module modules/mod_jk.so
+JkWorkersFile conf/workers.properties
+JkShmFile /tmp/shm
+JkLogFile logs/mod_jk.log
+JkLogLevel info
+JkMount /#{PROJECT_FOLDER}* lb
+
+JkMount /jkmanager* jkstatus"
+
+# VM configs
+VAGRANTFILE_API_VERSION = "2"
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  #Centos based
+  config.vm.box = "centos/7"
+  config.vm.provision "shell",
+    inline: common_provision
+  #configuring tomcts
+  [*1..tomcats_count].each do |index|
+    dns_name = "#{server_options["tomcat"]["name_prefix"]}#{index}"
+    ip = "#{server_options["tomcat"]["ip_prefix"]}#{index+1}"
+    #add data to list for future configuring
+    workers_names << dns_name
+    worker_ips << ip
+    #creating vm
+    config.vm.define dns_name do |server|
+      server.vm.hostname = dns_name
+      server.vm.network "private_network", ip: ip
+      if SERVERS_COUNT===1 then
+        server.vm.network "forwarded_port", guest: 8080, host: EXPOSED_PORT
+      end
+      if server_options["tomcat"].has_key?("share") then
+        server.vm.synced_folder server_options["tomcat"]["share"]["from"], server_options["tomcat"]["share"]["to"]
+      end
+      #creaiong provision script
+      script = <<SCRIPT
+        yum install -y java-1.8.0-openjdk
+        yum install -y tomcat tomcat-webapps tomcat-admin-webapps
+        systemctl enable tomcat
+        systemctl start tomcat
+        chmod 777 /usr/share/tomcat/webapps/
+SCRIPT
+      #add some configs
+      server.vm.provision "shell",
+        inline: script
+    end
+  end
+  if SERVERS_COUNT>1 then
+    #building balancer mapping file
+    wokers_hosts = workers_names.join(",")
+    properties_list = "worker.list=lb,jkstatus\n";
+    properties_list << "worker.jkstatus.type=status\n"
+    properties_list << "worker.lb.type=lb\n"
+    properties_list << "worker.lb.balance_workers=#{wokers_hosts}\n"
+    [*1..tomcats_count].each do |index|
+        properties_list << "worker.#{workers_names[index-1]}.host=#{worker_ips[index-1]}\n"
+        properties_list << "worker.#{workers_names[index-1]}.port=8009\n"
+        properties_list << "worker.#{workers_names[index-1]}.type=ajp13\n"
+
+    end
+    #creaiong provision script for httpd
+    script_httpd = <<SCRIPT
+    yum install -y httpd
+    cp /shared/mod_jk.so /etc/httpd/modules/
+    echo "#{properties_list}" > /etc/httpd/conf/workers.properties
+    echo "#{httpd_conf_config}" >> /etc/httpd/conf/httpd.conf
+    systemctl enable httpd
+    systemctl start httpd
+
+    yum install -y java-1.8.0-openjdk-devel wget unzip
+    wget https://services.gradle.org/distributions/gradle-3.4.1-bin.zip
+    mkdir /opt/gradle
+    unzip -d /opt/gradle gradle-3.4.1-bin.zip
+    export PATH=$PATH:/opt/gradle/gradle-3.4.1/bin
+    yum install -y git
+    git clone https://github.com/vitali-zevako/gradleSample.git
+    wget -O /etc/yum.repos.d/jenkins.repo http://pkg.jenkins-ci.org/redhat-stable/jenkins.repo
+    rpm --import http://pkg.jenkins-ci.org/redhat-stable/jenkins-ci.org.key
+    yum install -y jenkins
+    systemctl start jenkins.service
+    systemctl enable jenkins.service
+    export RUN_AS_USER=root
+    cp /shared/nexus.tar.gz /usr/local
+    cd /usr/local
+    tar xvzf nexus.tar.gz
+    ln -s nexus-2.14.5-02 nexus
+    cd /usr/local/nexus
+    ./bin/nexus start
+    cd /home/vagrant/gradleSample
+    cp /shared/build.gradle .
+    cp /shared/gradle.properties .
+SCRIPT
+    #configuring httpd
+    config.vm.define server_options["httpd"]["name"] do |server|
+      server.vm.hostname = server_options["httpd"]["name"]
+      server.vm.network "private_network", ip: server_options["httpd"]["ip"]
+      server.vm.network "forwarded_port", guest: 80, host: EXPOSED_PORT
+      server.vm.network "forwarded_port", guest: 8080, host: JENKINS_EXPOSED_PORT
+      server.vm.network "forwarded_port", guest: 8081, host: NEXUS_EXPOSED_PORT
+      if server_options["httpd"].has_key?("share") then
+        server.vm.synced_folder server_options["httpd"]["share"]["from"], server_options["httpd"]["share"]["to"]
+      end
+      server.vm.provision "shell",
+        inline: script_httpd
+    end
+  end
+end

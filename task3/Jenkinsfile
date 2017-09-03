@@ -1,0 +1,27 @@
+node('master') {
+   stage('Git checkup') { // clones git repo
+      git 'https://github.com/vitali-zevako/gradleSample.git'
+   }
+   stage('Buildind') { // building war file
+      sh 'cp /shared/build.gradle .'
+      sh 'cp /shared/gradle.properties .'
+      sh '/opt/gradle/gradle-3.4.1/bin/gradle incVersion'
+      sh '/opt/gradle/gradle-3.4.1/bin/gradle build'
+   }
+   stage('share') { // upload to nexus
+      sh 'curl -v -u admin:admin123 --upload-file build/libs/task3.war http://localhost:8081/nexus/content/repositories/snapshots/task3/1.0.0002/task3.war'
+    }
+}
+node('server1'){
+    stage('downloading'){
+        httpRequest outputFile: 'task3.war', responseHandle: 'NONE', url: 'http://72.22.0.4:8081/nexus/service/local/repositories/snapshots/content/task3/1.0.0002/task3.war'
+    }
+    stage('upgrading tomcat'){
+        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat11&vwa=1'
+        sh 'rm -rfv /usr/share/tomcat/webapps/task3/*'
+        sh 'cp task3.war /usr/share/tomcat/webapps/'
+        sleep 5
+        sh 'ls -al /usr/share/tomcat/webapps/task3'
+        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat11&vwa=0'
+    }
+}
