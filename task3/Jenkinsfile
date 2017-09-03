@@ -1,27 +1,75 @@
+def version = ''
+def buildName = ''
+withCredentials([usernamePassword(credentialsId: 'git_user', passwordVariable: 'git_pass', usernameVariable: 'git_name'), usernamePassword(credentialsId: 'nexus_user', passwordVariable: 'nexus_pass', usernameVariable: 'nexus_name')]) {
 node('master') {
    stage('Git checkup') { // clones git repo
-      git 'https://github.com/vitali-zevako/gradleSample.git'
+      git branch: "task3", url: 'https://github.com/mdanilchenko/devops_training.git'
    }
    stage('Buildind') { // building war file
-      sh 'cp /shared/build.gradle .'
-      sh 'cp /shared/gradle.properties .'
-      sh '/opt/gradle/gradle-3.4.1/bin/gradle incVersion'
-      sh '/opt/gradle/gradle-3.4.1/bin/gradle build'
+      dir("task3"){
+        sh '/opt/gradle/gradle-3.4.1/bin/gradle incVersion'
+        sh '/opt/gradle/gradle-3.4.1/bin/gradle build'
+      }
+   }
+   stage('Version detect'){
+       dir("task3/build/libs"){
+        String snapshotBase="libs"
+        new File(pwd()).eachFileRecurse{file->
+            buildName=file.name.replace(".war","")
+        }
+       }
+        println buildName
+        dir("task3"){
+          println buildName
+          Properties properties = new Properties()
+          sh 'ls'
+          File propertiesFile = new File(pwd()+'/gradle.properties')
+          def props = readProperties  file: pwd()+'/gradle.properties'
+         version = props.version+'.'+props.buildVersion
+         println version
+       }
    }
    stage('share') { // upload to nexus
-      sh 'curl -v -u admin:admin123 --upload-file build/libs/task3.war http://localhost:8081/nexus/content/repositories/snapshots/task3/1.0.0002/task3.war'
-    }
+      dir('task3'){
+         sh "curl -v -u ${nexus_name}:${nexus_pass} --upload-file build/libs/${buildName}.war http://localhost:8081/nexus/content/repositories/snapshots/${buildName}/${version}/${buildName}.war"
+    
+      }
+   }
 }
 node('server1'){
     stage('downloading'){
-        httpRequest outputFile: 'task3.war', responseHandle: 'NONE', url: 'http://72.22.0.4:8081/nexus/service/local/repositories/snapshots/content/task3/1.0.0002/task3.war'
+        httpRequest outputFile: "${buildName}.war", responseHandle: 'NONE', url: "http://72.22.0.4:8081/nexus/service/local/repositories/snapshots/content/${buildName}/${version}/${buildName}.war"
     }
     stage('upgrading tomcat'){
-        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat11&vwa=1'
-        sh 'rm -rfv /usr/share/tomcat/webapps/task3/*'
-        sh 'cp task3.war /usr/share/tomcat/webapps/'
-        sleep 5
-        sh 'ls -al /usr/share/tomcat/webapps/task3'
-        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat11&vwa=0'
+        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat1&vwa=1'
+        sh "cp ${buildName}.war /usr/share/tomcat/webapps/"
+        sleep 10
+        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat1&vwa=0'
     }
+}
+node('server2'){
+    stage('downloading'){
+        httpRequest outputFile: "${buildName}.war", responseHandle: 'NONE', url: "http://72.22.0.4:8081/nexus/service/local/repositories/snapshots/content/${buildName}/${version}/${buildName}.war"
+    }
+    stage('upgrading tomcat'){
+        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat2&vwa=1'
+        sh "cp ${buildName}.war /usr/share/tomcat/webapps/"
+        sleep 10
+        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat2&vwa=0'
+    }
+}
+node('master') {
+    stage('Git save') {
+        sh 'git config --global user.email "ms.danilchenko#gmail.com"'
+        sh 'git config --global user.name "mdanilchenko"'
+        sh 'git add *'
+        sh "git commit -m 'new version in'"
+        sh "git push https://${git_name}:${git_pass}@github.com/mdanilchenko/devops_training.git --all"
+        sh 'git checkout master'
+        sh 'git merge task3'
+        sh "git tag -a v${version} -m 'version ${version}'"
+        sh 'git push https://${git_name}:${git_pass}@github.com/mdanilchenko/devops_training.git --all'
+        
+    }
+}
 }
