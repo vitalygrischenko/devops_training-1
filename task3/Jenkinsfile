@@ -1,5 +1,30 @@
 def version = ''
 def buildName = ''
+def updateServer(name,buildName,version){
+ node("server${name}"){
+    stage('downloading'){
+        httpRequest outputFile: "${buildName}.war", responseHandle: 'NONE', url: "http://72.22.0.4:8081/nexus/service/local/repositories/snapshots/content/${buildName}/${version}/${buildName}.war"
+    }
+    stage('upgrading tomcat'){
+        httpRequest responseHandle: 'NONE', url: "http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat${name}&vwa=1"
+        if (fileExists("/usr/share/tomcat/webapps/${buildName}/index.jsp")) {
+         sh "sudo rm /usr/share/tomcat/webapps/${buildName}/index.jsp"
+        }
+        sh "cp ${buildName}.war /usr/share/tomcat/webapps/"
+        dir("/usr/share/tomcat/webapps/${buildName}"){
+         while (true) {
+          sleep 10
+          if (fileExists('index.jsp')) {
+            break
+          }
+         }
+        }
+        
+        httpRequest responseHandle: 'NONE', url: "http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat${name}&vwa=0"
+    }
+ }
+}
+
 withCredentials([usernamePassword(credentialsId: 'git_user', passwordVariable: 'git_pass', usernameVariable: 'git_name'), usernamePassword(credentialsId: 'nexus_user', passwordVariable: 'nexus_pass', usernameVariable: 'nexus_name')]) {
 node('master') {
    stage('Git checkup') { // clones git repo
@@ -36,39 +61,21 @@ node('master') {
       }
    }
 }
-node('server1'){
-    stage('downloading'){
-        httpRequest outputFile: "${buildName}.war", responseHandle: 'NONE', url: "http://72.22.0.4:8081/nexus/service/local/repositories/snapshots/content/${buildName}/${version}/${buildName}.war"
-    }
-    stage('upgrading tomcat'){
-        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat1&vwa=1'
-        sh "cp ${buildName}.war /usr/share/tomcat/webapps/"
-        sleep 10
-        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat1&vwa=0'
-    }
-}
-node('server2'){
-    stage('downloading'){
-        httpRequest outputFile: "${buildName}.war", responseHandle: 'NONE', url: "http://72.22.0.4:8081/nexus/service/local/repositories/snapshots/content/${buildName}/${version}/${buildName}.war"
-    }
-    stage('upgrading tomcat'){
-        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat2&vwa=1'
-        sh "cp ${buildName}.war /usr/share/tomcat/webapps/"
-        sleep 10
-        httpRequest responseHandle: 'NONE', url: 'http://72.22.0.4/jkmanager?cmd=update&from=list&w=lb&sw=tomcat2&vwa=0'
-    }
-}
+
+updateServer('1',buildName,version)
+updateServer('2',buildName,version)
+
 node('master') {
     stage('Git save') {
         sh 'git config --global user.email "ms.danilchenko#gmail.com"'
         sh 'git config --global user.name "mdanilchenko"'
         sh 'git add *'
-        sh "git commit -m 'new version in'"
+        sh "git commit -m 'new version ${version}'"
         sh "git push https://${git_name}:${git_pass}@github.com/mdanilchenko/devops_training.git --all"
         sh 'git checkout master'
         sh 'git merge task3'
         sh "git tag -a v${version} -m 'version ${version}'"
-        sh 'git push https://${git_name}:${git_pass}@github.com/mdanilchenko/devops_training.git --all'
+        sh 'git push https://${git_name}:${git_pass}@github.com/mdanilchenko/devops_training.git --tags'
         
     }
 }
