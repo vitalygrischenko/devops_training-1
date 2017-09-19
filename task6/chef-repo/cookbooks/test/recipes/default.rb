@@ -7,9 +7,9 @@
 docker_service 'default' do
   action [:create, :start]
 end
-
-bash 'add_docker_option' do
-  code <<-EOH
-    echo '{"insecure-registries" : ["registry.com:5000"]}' > /etc/docker/daemon.json
-    EOH
+docker_service 'default' do
+  insecure_registry 'myregistry.com:5000'
+end
+docker_service 'default' do
+  action [:restart]
 end
