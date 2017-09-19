@@ -1,0 +1,60 @@
+#Reading DNS Settings
+server_list = {
+  "server" => {
+      "ip"=>"72.22.0.2",
+      "main"=>true
+    },
+    "node1" => {
+        "ip"=>"72.22.0.3"
+    }
+}
+#collect all hosts
+dnsOutput = "";
+server_list.each do |hostname, info|
+  dnsOutput << "\n#{info["ip"]} #{hostname} #{hostname}"
+end
+#creating simple script for Hosts update
+script = <<SCRIPT
+  echo "#{dnsOutput}" >> /etc/hosts
+SCRIPT
+
+script2 = <<SCRIPT
+  sysctl -w vm.max_map_count=262144
+  yum install -y yum-utils makecache fast
+  yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+  yum -y install docker-ce
+  systemctl start docker
+  systemctl enable docker
+SCRIPT
+
+# VM configs
+VAGRANTFILE_API_VERSION = "2"
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  #Centos based
+  config.vm.box = "centos/7"
+  #config.vm.provider :virtualbox do |vb|
+  #   # Don't boot with headless mode
+  #   vb.gui = true
+  #
+  #   # Use VBoxManage to customize the VM. For example to change memory:
+  # vb.customize ["modifyvm", :id, "--memory", "4096", "--cpus", "2"]
+  #end
+  #configure machines
+  server_list.each do |dns_name, info|
+    config.vm.define dns_name do |server|
+      server.vm.hostname = dns_name
+      server.vm.network "private_network", ip: info["ip"]
+      if info.has_key?("share") then
+        server.vm.synced_folder info["share"]["from"], info["share"]["to"]
+      end
+      if info.has_key?("provision") then
+        server.vm.provision info["provision"]["type"], path: info["provision"]["path"]
+      end
+      if info.has_key?("main") then
+        server.vm.network "forwarded_port", guest: 443, host: 443
+      end;
+      server.vm.provision "shell",
+        inline: script
+    end
+  end
+end
